@@ -1,23 +1,23 @@
-# FRR EVPN-VXLAN 實驗教學(L2 VNI 與 L3 VNI)
+# FRR EVPN-VXLAN 实验教学(L2 VNI 与 L3 VNI)
 
-本教學整理自舊的測試筆記,在「單一台 Linux 主機」上用 docker 建立隔離網路與兩個 privileged FRR 容器,
-模擬 Server1 / Server2,實作 BGP EVPN-VXLAN。不需要第二台實體機,也不使用 `--network host`,
-不修改主機的 iptables / sysctl / netns。
-參考文件:<https://docs.frrouting.org/en/latest/evpn.html>
+本教学整理自旧的测试笔记,在「单一台 Linux 主机」上用 docker 创建隔离网络与两个 privileged FRR 容器,
+仿真 Server1 / Server2,实作 BGP EVPN-VXLAN。不需要第二台实体机,也不使用 `--network host`,
+不修改主机的 iptables / sysctl / netns。
+参考文档:<https://docs.frrouting.org/en/latest/evpn.html>
 
-> 已在容器環境驗證(FRR `frrouting/frr:v8.4.1`):L2 與 L3 實驗皆可建立,BGP 為 Established,type-2/3/5 路由出現,ping 成功。
+> 已在容器环境验证(FRR `frrouting/frr:v8.4.1`):L2 与 L3 实验皆可创建,BGP 为 Established,type-2/3/5 路由出现,ping 成功。
 
-## 目錄結構
+## 目录结构
 
 ```
 FRR_EVPN_Lab/
 ├── README.md
 ├── common/
-│   ├── daemons          # FRR daemons 設定(bgpd=yes),掛載到容器
-│   └── lab.sh           # 建立 / 移除 docker network 與兩個 FRR 容器(up l2|l3、down、status)
+│   ├── daemons          # FRR daemons 配置(bgpd=yes),挂载到容器
+│   └── lab.sh           # 创建 / 移除 docker network 与两个 FRR 容器(up l2|l3、down、status)
 ├── l2-evpn/
-│   ├── server1.sh  server2.sh             # 容器內的 Linux 網路設定
-│   └── server1-frr.conf  server2-frr.conf # vtysh 格式的 FRR 設定
+│   ├── server1.sh  server2.sh             # 容器内的 Linux 网络配置
+│   └── server1-frr.conf  server2-frr.conf # vtysh 格式的 FRR 配置
 └── l3-evpn/
     ├── server1.sh  server2.sh
     └── server1-frr.conf  server2-frr.conf
@@ -25,20 +25,20 @@ FRR_EVPN_Lab/
 
 ## 1. 概念
 
-- VXLAN / VNI:以 UDP 4789 在 underlay 上封裝 L2 frame,VNI 是 24 bit 的網段識別碼。
-- EVPN:用 BGP(address-family `l2vpn evpn`)作為 VXLAN 的控制面,取代資料面的泛洪學習。
-- L2 VNI:一個 VNI 對應一個 L2 網段(一個 Linux bridge)。同一網段的主機透過 VXLAN 互通,僅做 L2 橋接。
-- L3 VNI(symmetric IRB):每個 VRF 對應一個專用的 L3 VNI(本例 VNI 3000 對應 `vrf1`),用來在不同 VNI(不同子網)之間路由。
-  入口 VTEP 先在 VRF 內路由,封裝成 L3 VNI 送到出口 VTEP,出口再於 VRF 內路由到目的子網,所以兩端都做「一次橋接 + 一次路由」,稱為 symmetric。
-- Type-2 route(MAC/IP advertisement):通告主機的 MAC(與 IP),取代 MAC 學習。
-- Type-3 route(inclusive multicast):通告 VTEP 加入哪些 VNI,用於 BUM 流量的複製清單。
-- Type-5 route(IP prefix):通告 VRF 內的 IP 前綴(本例由 `redistribute connected` 加上 `advertise ipv4 unicast` 產生)。
-- `nolearning`(vxlan 介面選項):關閉核心對 VXLAN 的資料面 MAC 學習,由 FRR 透過 EVPN 寫入 FDB。
-- `neigh_suppress`(bridge_slave 選項):VTEP 本機代答 ARP/ND(依 EVPN 學到的 neighbor),減少 BUM 廣播跨隧道。
-- VRF:Linux VRF 是獨立的路由表(本例 table 1100),隔離 tenant 的路由。
-- Anycast gateway:兩台 VTEP 的 SVI(`br100`、`br200`)使用相同 IP 與相同 MAC,主機不論在哪台都用同一個閘道。
+- VXLAN / VNI:以 UDP 4789 在 underlay 上封装 L2 frame,VNI 是 24 bit 的网段识别码。
+- EVPN:用 BGP(address-family `l2vpn evpn`)作为 VXLAN 的控制面,取代数据面的泛洪学习。
+- L2 VNI:一个 VNI 对应一个 L2 网段(一个 Linux bridge)。同一网段的主机通过 VXLAN 互通,仅做 L2 桥接。
+- L3 VNI(symmetric IRB):每个 VRF 对应一个专用的 L3 VNI(本例 VNI 3000 对应 `vrf1`),用来在不同 VNI(不同子网)之间路由。
+  入口 VTEP 先在 VRF 内路由,封装成 L3 VNI 送到出口 VTEP,出口再于 VRF 内路由到目的子网,所以两端都做「一次桥接 + 一次路由」,称为 symmetric。
+- Type-2 route(MAC/IP advertisement):通告主机的 MAC(与 IP),取代 MAC 学习。
+- Type-3 route(inclusive multicast):通告 VTEP 加入哪些 VNI,用于 BUM 流量的拷贝清单。
+- Type-5 route(IP prefix):通告 VRF 内的 IP 前缀(本例由 `redistribute connected` 加上 `advertise ipv4 unicast` 产生)。
+- `nolearning`(vxlan 接口选项):关闭内核对 VXLAN 的数据面 MAC 学习,由 FRR 通过 EVPN 写入 FDB。
+- `neigh_suppress`(bridge_slave 选项):VTEP 本机代答 ARP/ND(依 EVPN 学到的 neighbor),减少 BUM 广播跨隧道。
+- VRF:Linux VRF 是独立的路由表(本例 table 1100),隔离 tenant 的路由。
+- Anycast gateway:两台 VTEP 的 SVI(`br100`、`br200`)使用相同 IP 与相同 MAC,主机不论在哪台都用同一个闸道。
 
-## 2. 實驗拓樸
+## 2. 实验拓朴
 
 ```
          docker network evpnlab-net (underlay 10.99.0.0/24)
@@ -49,10 +49,10 @@ FRR_EVPN_Lab/
    | AS 6500 (iBGP)     |                  | AS 6500 (iBGP)     |
    +--------------------+                  +--------------------+
 
-[L2 實驗]  只有 VNI 100
+[L2 实验]  只有 VNI 100
   host1 10.0.0.1/24 -- br100/vxlan100 ==== vxlan100/br100 -- host1 10.0.0.2/24
 
-[L3 實驗]  vrf1 + L3 VNI 3000
+[L3 实验]  vrf1 + L3 VNI 3000
   Server1                                          Server2
   host1 10.0.0.1/24 -- br100 (10.0.0.254) -+       +- br100 (10.0.0.254) -- host1 10.0.0.2/24
                        vxlan100            |       |  vxlan100
@@ -61,70 +61,70 @@ FRR_EVPN_Lab/
                        br3000/vxlan3000 ===+=======+== br3000/vxlan3000   (L3 VNI 3000)
 ```
 
-host1 / host2 是各容器內的 netns,由 `server*.sh` 建立。
+host1 / host2 是各容器内的 netns,由 `server*.sh` 创建。
 
 ## 3. 前置需求
 
-- 一台 Linux 主機,已安裝 docker(可執行 `docker` 指令的使用者即可,不需要 sudo 修改主機網路)。
-- 映像 `frrouting/frr:v8.4.1`(首次執行 `docker pull frrouting/frr:v8.4.1`,或由 `docker run` 自動拉取)。
-  可用環境變數 `FRR_IMAGE` 覆寫。
-- underlay 網段預設 `10.99.0.0/24`,需與主機既有 docker network 不衝突;可用 `SUBNET`、`S1_IP`、`S2_IP` 覆寫,
-  但 `server*-frr.conf` 內的 router-id 與 neighbor 也要同步修改。
-- 同一時間只能執行一組實驗(L2 或 L3),`lab.sh up` 會先移除上一次的實驗資源。
-- 本實驗只會建立、刪除名稱前綴為 `evpnlab-` 的容器與 network,不會動到主機上其他資源。
+- 一台 Linux 主机,已安装 docker(可运行 `docker` 指令的用户即可,不需要 sudo 修改主机网络)。
+- 映像 `frrouting/frr:v8.4.1`(首次运行 `docker pull frrouting/frr:v8.4.1`,或由 `docker run` 自动拉取)。
+  可用环境变量 `FRR_IMAGE` 覆写。
+- underlay 网段缺省 `10.99.0.0/24`,需与主机既有 docker network 不冲突;可用 `SUBNET`、`S1_IP`、`S2_IP` 覆写,
+  但 `server*-frr.conf` 内的 router-id 与 neighbor 也要同步修改。
+- 同一时间只能运行一组实验(L2 或 L3),`lab.sh up` 会先移除上一次的实验资源。
+- 本实验只会创建、删除名称前缀为 `evpnlab-` 的容器与 network,不会动到主机上其他资源。
 
-## 4. 步驟:L2 EVPN(VNI 100)
+## 4. 步骤:L2 EVPN(VNI 100)
 
 ```bash
 cd FRR_EVPN_Lab
 ./common/lab.sh up l2
 ```
 
-`lab.sh up l2` 會:
+`lab.sh up l2` 会:
 
-1. 建立 docker network `evpnlab-net` 與容器 `evpnlab-s1`(10.99.0.11)、`evpnlab-s2`(10.99.0.12)。
-2. 在各容器內執行 `l2-evpn/server1.sh` / `server2.sh`:建立 netns `host1`、`vxlan100`(`nolearning`)、`br100`,並把 host 接上 bridge。
-3. 用 `vtysh -f` 載入 `server1-frr.conf` / `server2-frr.conf`:`router bgp 6500`、互為 neighbor、
-   `l2vpn evpn` 下 `neighbor ... activate` 與 `advertise-all-vni`。
+1. 创建 docker network `evpnlab-net` 与容器 `evpnlab-s1`(10.99.0.11)、`evpnlab-s2`(10.99.0.12)。
+2. 在各容器内运行 `l2-evpn/server1.sh` / `server2.sh`:创建 netns `host1`、`vxlan100`(`nolearning`)、`br100`,并把 host 接上 bridge。
+3. 用 `vtysh -f` 加载 `server1-frr.conf` / `server2-frr.conf`:`router bgp 6500`、互为 neighbor、
+   `l2vpn evpn` 下 `neighbor ... activate` 与 `advertise-all-vni`。
 
-接著依第 6 節驗證,並執行:
+接着依第 6 节验证,并运行:
 
 ```bash
 docker exec evpnlab-s1 ip netns exec host1 ping -c 3 10.0.0.2
 ```
 
-## 5. 步驟:L3 EVPN(VNI 100/200 + L3 VNI 3000)
+## 5. 步骤:L3 EVPN(VNI 100/200 + L3 VNI 3000)
 
 ```bash
 cd FRR_EVPN_Lab
 ./common/lab.sh up l3
 ```
 
-`server1.sh` / `server2.sh` 的內容(腳本內有逐步註解):
+`server1.sh` / `server2.sh` 的内容(脚本内有逐步注解):
 
-- 設定 `net.ipv4.ip_forward=1` 與 `rp_filter=0`(只作用於容器的網路命名空間)。
-- 建立 `vrf1`(table 1100)。
-- 對 VNI 100、200、3000 各建立 `vxlan${vni}` 與 `br${vni}`,bridge 掛到 `vrf1`,vxlan 設 `neigh_suppress on learning off`。
-- 建立 netns `host1`(接 `br100`)、`host2`(接 `br200`)。
-- 在 `br100`、`br200` 設相同 MAC `02:00:00:00:00:fe` 與閘道 IP `10.0.0.254/24`、`11.0.0.254/24`。
+- 配置 `net.ipv4.ip_forward=1` 与 `rp_filter=0`(只作用于容器的网络命名空间)。
+- 创建 `vrf1`(table 1100)。
+- 对 VNI 100、200、3000 各创建 `vxlan${vni}` 与 `br${vni}`,bridge 挂到 `vrf1`,vxlan 设 `neigh_suppress on learning off`。
+- 创建 netns `host1`(接 `br100`)、`host2`(接 `br200`)。
+- 在 `br100`、`br200` 设相同 MAC `02:00:00:00:00:fe` 与闸道 IP `10.0.0.254/24`、`11.0.0.254/24`。
 
-FRR 設定重點:
+FRR 配置重点:
 
-- `vrf vrf1` / `vni 3000`:把 VRF 對應到 L3 VNI。
-- `advertise-all-vni`:通告所有本機 L2 VNI。
+- `vrf vrf1` / `vni 3000`:把 VRF 对应到 L3 VNI。
+- `advertise-all-vni`:通告所有本机 L2 VNI。
 - `advertise-svi-ip`:通告 SVI 的 IP/MAC。
-- `router bgp 6500 vrf vrf1` 中 `redistribute connected` 與 `advertise ipv4 unicast`:把 vrf1 的直連網段以 type-5 通告。
+- `router bgp 6500 vrf vrf1` 中 `redistribute connected` 与 `advertise ipv4 unicast`:把 vrf1 的直连网段以 type-5 通告。
 
-測試步驟:
+测试步骤:
 
-1. 同網段(L2 VNI):
+1. 同网段(L2 VNI):
 
    ```bash
    docker exec evpnlab-s1 ip netns exec host1 ping -c 3 10.0.0.2
    docker exec evpnlab-s2 ip netns exec host2 ping -c 3 11.0.0.1
    ```
 
-2. 跨網段前,先讓每台 host 各 ping 自己的 gateway(每台 Server、每個 host 都要做):
+2. 跨网段前,先让每台 host 各 ping 自己的 gateway(每台 Server、每个 host 都要做):
 
    ```bash
    for s in s1 s2; do
@@ -133,74 +133,74 @@ FRR 設定重點:
    done
    ```
 
-   原因:vxlan 介面設了 `neigh_suppress on`,VTEP 不再把 ARP 洪泛到對端。遠端主機若從未送過封包,
-   EVPN 就沒有該主機的 type-2(MAC+IP)route,本機不知道它的 IP 與 MAC,第一次跨網段 ping 會 100% 失敗(實測如此)。
-   host ping gateway 會讓所屬 VTEP 學到該主機的 IP/MAC 並以 type-2 通告,之後 `show ip route vrf vrf1` 才會出現對端 /32 路由。
+   原因:vxlan 接口设了 `neigh_suppress on`,VTEP 不再把 ARP 洪泛到对端。远程主机若从未送过封包,
+   EVPN 就没有该主机的 type-2(MAC+IP)route,本机不知道它的 IP 与 MAC,第一次跨网段 ping 会 100% 失败(实测如此)。
+   host ping gateway 会让所属 VTEP 学到该主机的 IP/MAC 并以 type-2 通告,之后 `show ip route vrf vrf1` 才会出现对端 /32 路由。
 
-3. 跨網段(經 L3 VNI 3000):
+3. 跨网段(经 L3 VNI 3000):
 
    ```bash
    docker exec evpnlab-s1 ip netns exec host1 ping -c 3 11.0.0.2
    docker exec evpnlab-s2 ip netns exec host2 ping -c 3 10.0.0.1
    ```
 
-關於 type-5:本拓樸兩端都擁有相同的 SVI 網段(10.0.0.0/24、11.0.0.0/24),所以收到的 type-5 前綴與本機 connected 路由相同,
-本機的 connected 路由優先。實際跨 VTEP 的轉送走的是 type-2 產生的 /32 路由(`B>* 10.0.0.2/32 ... br3000 onlink`),
-type-5 只是被通告出來,並未用來轉送。若要讓 type-5 真正派上用場,需讓兩端使用不同的子網。
+关于 type-5:本拓朴两端都拥有相同的 SVI 网段(10.0.0.0/24、11.0.0.0/24),所以收到的 type-5 前缀与本机 connected 路由相同,
+本机的 connected 路由优先。实际跨 VTEP 的转送走的是 type-2 产生的 /32 路由(`B>* 10.0.0.2/32 ... br3000 onlink`),
+type-5 只是被通告出来,并未用来转送。若要让 type-5 真正派上用场,需让两端使用不同的子网。
 
-## 6. 驗證指令
+## 6. 验证指令
 
-Linux 側(在容器內執行):
+Linux 侧(在容器内运行):
 
 ```bash
-docker exec evpnlab-s1 bridge fdb show dev vxlan100 | grep dst  # 應看到由 EVPN 寫入、指向對端 underlay IP 的 FDB
-docker exec evpnlab-s1 ip -d link show vxlan100                 # 確認 nolearning、local、dstport 4789
-docker exec evpnlab-s1 ip netns exec host1 ip route             # host 的預設路由
+docker exec evpnlab-s1 bridge fdb show dev vxlan100 | grep dst  # 应看到由 EVPN 写入、指向对端 underlay IP 的 FDB
+docker exec evpnlab-s1 ip -d link show vxlan100                 # 确认 nolearning、local、dstport 4789
+docker exec evpnlab-s1 ip netns exec host1 ip route             # host 的缺省路由
 ```
 
-FRR 側(先進入 `docker exec -it evpnlab-s1 vtysh`,或用 `docker exec evpnlab-s1 vtysh -c '...'`):
+FRR 侧(先进入 `docker exec -it evpnlab-s1 vtysh`,或用 `docker exec evpnlab-s1 vtysh -c '...'`):
 
 ```
-show bgp l2vpn evpn summary      # neighbor 應為 Established
+show bgp l2vpn evpn summary      # neighbor 应为 Established
 show bgp l2vpn evpn route        # type-2 / type-3 / type-5
-show evpn vni                    # 本機 VNI 清單
-show evpn mac vni 100            # VNI 100 學到的 MAC
-show evpn arp-cache vni 100      # VNI 100 學到的 ARP(local / remote)
-show vrf                         # (L3) VRF 清單
-show vrf vni                     # (L3) VRF 與 L3 VNI 3000 的對應
-show ip route vrf vrf1           # (L3) 應有對端的 10.0.0.x/32、11.0.0.x/32 路由
-show bgp vrf vrf1 ipv4 unicast   # (L3) vrf1 的 BGP 路由,可看到 /24(本機與 type-5)與對端 /32(type-2)
+show evpn vni                    # 本机 VNI 清单
+show evpn mac vni 100            # VNI 100 学到的 MAC
+show evpn arp-cache vni 100      # VNI 100 学到的 ARP(local / remote)
+show vrf                         # (L3) VRF 清单
+show vrf vni                     # (L3) VRF 与 L3 VNI 3000 的对应
+show ip route vrf vrf1           # (L3) 应有对端的 10.0.0.x/32、11.0.0.x/32 路由
+show bgp vrf vrf1 ipv4 unicast   # (L3) vrf1 的 BGP 路由,可看到 /24(本机与 type-5)与对端 /32(type-2)
 ```
 
-## 7. 注意事項(相對於原始筆記的修正)
+## 7. 注意事项(相对于原始笔记的修正)
 
-1. router-id 與 neighbor 寫反:原筆記 Server1 的 router-id 寫對端 IP、neighbor 寫自己(Server2 則相反)。
-   已修正:各端 router-id 為自己的 IP,neighbor 為對端 IP。
-2. Server2 的 for 迴圈原本只建 `100 3000`,漏了 `200`,導致 `br200` 不存在、接 `h2-ovs-bgp` 失敗。已改為 `100 200 3000`。
-3. Server2 host2 的 default route 原本誤寫 `via 10.0.0.254`,已改為 `via 11.0.0.254`。Server2 原本也沒設定 `br100`/`br200` 的閘道 IP,已補上。
-   兩端採用相同的 anycast gateway(`10.0.0.254/24`、`11.0.0.254/24`),並用 `ip link set ... address 02:00:00:00:00:fe` 指定相同 MAC。
-   anycast gateway 需要相同 MAC,否則主機搬到另一台時 ARP 快取中的閘道 MAC 會失效。
-4. 原筆記混用已淘汰的 `ifconfig`、`brctl`,腳本一律改用 iproute2:
-   - `brctl addbr/addif/stp` 對應 `ip link add ... type bridge`、`ip link set ... master ...`、`stp_state 0`。
-   - `ifconfig` 對應 `ip link set ... up`、`ip addr add`。
-5. L3 範例需要 `net.ipv4.ip_forward=1`,否則無法跨網段轉發。
-   `rp_filter=0` 為依評估加入的選項:symmetric IRB 的回程封包從 L3 VNI 進入,嚴格反向路徑檢查可能丟包。
-   預設關閉,可用 `RELAX_RP_FILTER=0` 取消。這些 sysctl 只影響容器,不影響主機。
-6. 腳本皆使用 `set -euo pipefail`。`server*.sh` 不是冪等的,重跑請先 `lab.sh down`(`lab.sh up` 會自動先清理)。
-7. `daemons` 檔必須設 `bgpd=yes`(zebra 會一併啟動)。容器內 FRR 設定不會保留,重建容器後需重新套用(`lab.sh up` 會自動處理)。
-8. iBGP 與 eBGP:本例兩端同為 AS 6500(iBGP),不需要 `no bgp ebgp-requires-policy`。只有改用 eBGP(兩端 AS 不同)時才需加上。
-9. 使用 anycast gateway(兩端相同 IP/MAC)同時開啟 `advertise-svi-ip`,實測在此拓撲沒有出現重複 IP/MAC 的異常。
-10. 在 netns 內的 bridge 設 `stp_state 0` 時,容器內可能出現 "STP does not work in non-root netns" 警告,無害。
+1. router-id 与 neighbor 写反:原笔记 Server1 的 router-id 写对端 IP、neighbor 写自己(Server2 则相反)。
+   已修正:各端 router-id 为自己的 IP,neighbor 为对端 IP。
+2. Server2 的 for 循环原本只建 `100 3000`,漏了 `200`,导致 `br200` 不存在、接 `h2-ovs-bgp` 失败。已改为 `100 200 3000`。
+3. Server2 host2 的 default route 原本误写 `via 10.0.0.254`,已改为 `via 11.0.0.254`。Server2 原本也没配置 `br100`/`br200` 的闸道 IP,已补上。
+   两端采用相同的 anycast gateway(`10.0.0.254/24`、`11.0.0.254/24`),并用 `ip link set ... address 02:00:00:00:00:fe` 指定相同 MAC。
+   anycast gateway 需要相同 MAC,否则主机搬到另一台时 ARP 缓存中的闸道 MAC 会失效。
+4. 原笔记混用已淘汰的 `ifconfig`、`brctl`,脚本一律改用 iproute2:
+   - `brctl addbr/addif/stp` 对应 `ip link add ... type bridge`、`ip link set ... master ...`、`stp_state 0`。
+   - `ifconfig` 对应 `ip link set ... up`、`ip addr add`。
+5. L3 范例需要 `net.ipv4.ip_forward=1`,否则无法跨网段转发。
+   `rp_filter=0` 为依评估加入的选项:symmetric IRB 的回程封包从 L3 VNI 进入,严格反向路径检查可能丢包。
+   缺省关闭,可用 `RELAX_RP_FILTER=0` 取消。这些 sysctl 只影响容器,不影响主机。
+6. 脚本皆使用 `set -euo pipefail`。`server*.sh` 不是幂等的,重跑请先 `lab.sh down`(`lab.sh up` 会自动先清理)。
+7. `daemons` 档必须设 `bgpd=yes`(zebra 会一并启动)。容器内 FRR 配置不会保留,重建容器后需重新套用(`lab.sh up` 会自动处理)。
+8. iBGP 与 eBGP:本例两端同为 AS 6500(iBGP),不需要 `no bgp ebgp-requires-policy`。只有改用 eBGP(两端 AS 不同)时才需加上。
+9. 使用 anycast gateway(两端相同 IP/MAC)同时打开 `advertise-svi-ip`,实测在此拓扑没有出现重复 IP/MAC 的异常。
+10. 在 netns 内的 bridge 设 `stp_state 0` 时,容器内可能出现 "STP does not work in non-root netns" 警告,无害。
 
-## 8. 疑難排解
+## 8. 疑难排解
 
-- BGP 不是 Established:`docker exec evpnlab-s1 ping -c1 10.99.0.12` 確認 underlay 互通,
-  `docker exec evpnlab-s1 vtysh -c 'show bgp summary'`,以及 router-id / neighbor 沒有寫反。
-- `show bgp l2vpn evpn route` 是空的:確認有 `advertise-all-vni`,且 `vxlan` 與 `br` 介面為 up。
-- `show evpn vni` 看不到 VNI:確認 vxlan 介面的 `local` 是容器 IP、zebra 與 bgpd 有啟動(`docker logs evpnlab-s1`)。
-- 跨網段 ping 不通:先依第 5 節讓各 host ping 自己的 gateway;再檢查 `show vrf vni` 是否有 3000、`show ip route vrf vrf1` 是否有對端 /32 路由。
-- `lab.sh up` 建立 network 失敗:`10.99.0.0/24` 可能與既有網段衝突,改用 `SUBNET` 等環境變數(見第 3 節)。
-- 重做實驗:直接重跑 `./common/lab.sh up l2|l3`。
+- BGP 不是 Established:`docker exec evpnlab-s1 ping -c1 10.99.0.12` 确认 underlay 互通,
+  `docker exec evpnlab-s1 vtysh -c 'show bgp summary'`,以及 router-id / neighbor 没有写反。
+- `show bgp l2vpn evpn route` 是空的:确认有 `advertise-all-vni`,且 `vxlan` 与 `br` 接口为 up。
+- `show evpn vni` 看不到 VNI:确认 vxlan 接口的 `local` 是容器 IP、zebra 与 bgpd 有启动(`docker logs evpnlab-s1`)。
+- 跨网段 ping 不通:先依第 5 节让各 host ping 自己的 gateway;再检查 `show vrf vni` 是否有 3000、`show ip route vrf vrf1` 是否有对端 /32 路由。
+- `lab.sh up` 创建 network 失败:`10.99.0.0/24` 可能与既有网段冲突,改用 `SUBNET` 等环境变量(见第 3 节)。
+- 重做实验:直接重跑 `./common/lab.sh up l2|l3`。
 
 ## 9. 清理
 
@@ -208,6 +208,6 @@ show bgp vrf vrf1 ipv4 unicast   # (L3) vrf1 的 BGP 路由,可看到 /24(本機
 ./common/lab.sh down
 ```
 
-只會移除容器 `evpnlab-s1`、`evpnlab-s2` 與 docker network `evpnlab-net`(網路物件隨容器一併消失),
-不會動到主機上其他容器、network 與服務。可重複執行。用 `./common/lab.sh status` 檢查是否仍有殘留。
+只会移除容器 `evpnlab-s1`、`evpnlab-s2` 与 docker network `evpnlab-net`(网络对象随容器一并消失),
+不会动到主机上其他容器、network 与服务。可重复运行。用 `./common/lab.sh status` 检查是否仍有残留。
 若不再使用,可另行 `docker rmi frrouting/frr:v8.4.1` 移除映像。

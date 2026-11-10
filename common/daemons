@@ -1,6 +1,6 @@
-# FRR daemons 範例檔(掛載到容器的 /etc/frr/daemons)
-# 本實驗需要 bgpd=yes;zebra 為所有路由協定的基礎,必須啟動。
-# 其餘協定用不到,保持 no 以減少資源使用。
+# FRR daemons 范例档(挂载到容器的 /etc/frr/daemons)
+# 本实验需要 bgpd=yes;zebra 为所有路由协定的基础,必须启动。
+# 其余协定用不到,保持 no 以减少资源使用。
 
 bgpd=yes
 ospfd=no
@@ -21,7 +21,7 @@ fabricd=no
 vrrpd=no
 pathd=no
 
-# vtysh_enable=yes 讓容器內可使用 vtysh
+# vtysh_enable=yes 让容器内可使用 vtysh
 vtysh_enable=yes
 zebra_options="  -A 127.0.0.1 -s 90000000"
 bgpd_options="   -A 127.0.0.1"
